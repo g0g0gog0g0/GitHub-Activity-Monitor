@@ -1,0 +1,25 @@
+github:
+  token: ""
+  username: ""    # 
+  poll_interval: 300  # 检查间隔(秒)
+  max_events: 3  # 最大推送数量
+
+database:
+  path: "github_events.db"  # SQLite数据库路径
+
+logging:
+  file: "github_monitor.log"  # 日志文件路径
+  level: "INFO"               # 日志级别: DEBUG/INFO/WARNING/ERROR
+
+notifications:
+  # 钉钉机器人
+  dingtalk:
+    enable: false
+    webhook: "https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxxxx"
+    secret: ""  # 加签密钥（可选）
+
+  # 飞书机器人
+  feishu:
+    enable: false
+    webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxx"
+    secret: ""  # 加签密钥（可选）
