@@ -9,7 +9,7 @@
 
 - 🔔 **实时监控**：自动获取GitHub用户动态（Star、Fork、Push等事件）
 - 📊 **信息丰富**：显示仓库描述、语言、Star数等详细信息
-- 📱 **多平台支持**：同时支持钉钉和飞书机器人通知
+- 📱 **多平台支持**：同时支持钉钉和飞书机器人通知（可配置多个机器人）
 - ⏱ **防重复推送**：基于事件ID的去重机制
 
 ## 支持的事件类型
@@ -35,27 +35,39 @@ pip install pyyaml requests sqlite3
 ### 配置文件
 ```yaml
 github:
-  username: "你的GitHub用户名"
-  token: "你的GitHub Token"
-  max_events: 10
-  poll_interval: 60  # 检查间隔(秒)
+  username: "your_github_username"
+  token: "your_github_token"
+  poll_interval: 300  # 检查间隔(秒)
+  max_events: 3  # 最大推送数量
+
 
 logging:
-  level: "INFO"
-  file: "github_monitor.log"
+  level: INFO
+  file: github_monitor.log
 
 database:
-  path: "github_events.db"
+  path: github_events.db
 
 notifications:
   dingtalk:
     enable: true
-    webhook: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN"
-    secret: "SECRET"  # 可选
+    bots:
+      - name: "主机器人"
+        webhook: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN1"
+        secret: "YOUR_SECRET1"
+      - name: "备用机器人"
+        webhook: "https://oapi.dingtalk.com/robot/send?access_token=YOUR_TOKEN2"
+        secret: "YOUR_SECRET2"
+
   feishu:
     enable: true
-    webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN"
-    secret: "SECRET"  # 可选
+    bots:
+      - name: "主机器人"
+        webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN1"
+        secret: "YOUR_SECRET1"
+      - name: "备用机器人"
+        webhook: "https://open.feishu.cn/open-apis/bot/v2/hook/YOUR_TOKEN2"
+        secret: "YOUR_SECRET2"
 ```
 
 ### GitHub Token 配置

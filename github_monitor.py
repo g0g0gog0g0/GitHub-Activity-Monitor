@@ -14,6 +14,7 @@ import re
 with open("config.yaml") as f:
     config = yaml.safe_load(f)
 
+
 # 日志配置
 def setup_logger():
     logger = logging.getLogger("GitHubMonitor")
@@ -36,13 +37,15 @@ def setup_logger():
     logger.addHandler(file_handler)
     return logger
 
+
 logger = setup_logger()
+
 
 class Database:
     def __init__(self):
         self.conn = sqlite3.connect(config["database"]["path"])
         self._init_db()
-    
+
     def _init_db(self):
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS pushed_events (
@@ -67,12 +70,12 @@ class Database:
             )
         """)
         self.conn.commit()
-    
+
     def is_pushed(self, event_id):
         cursor = self.conn.cursor()
         cursor.execute("SELECT 1 FROM pushed_events WHERE event_id=?", (event_id,))
         return cursor.fetchone() is not None
-    
+
     def mark_pushed(self, event_id):
         try:
             self.conn.execute(
@@ -82,7 +85,7 @@ class Database:
             self.conn.commit()
         except sqlite3.IntegrityError:
             pass
-    
+
     def get_repo_info(self, repo_name):
         cursor = self.conn.cursor()
         cursor.execute(
@@ -90,17 +93,17 @@ class Database:
             (repo_name,)
         )
         return cursor.fetchone()
-    
+
     def cache_repo_info(self, repo_name, info):
         self.conn.execute(
             """INSERT OR REPLACE INTO repo_cache 
             VALUES (?, ?, ?, ?, ?)""",
-            (repo_name, info.get("description"), 
+            (repo_name, info.get("description"),
              info.get("language"), info.get("stargazers_count", 0),
              datetime.now().isoformat())
         )
         self.conn.commit()
-    
+
     def get_user_avatar(self, login):
         cursor = self.conn.cursor()
         cursor.execute(
@@ -109,7 +112,7 @@ class Database:
         )
         result = cursor.fetchone()
         return result[0] if result else None
-    
+
     def cache_user_avatar(self, login, avatar_url):
         self.conn.execute(
             """INSERT OR REPLACE INTO user_cache 
@@ -117,14 +120,15 @@ class Database:
             (login, avatar_url, datetime.now().isoformat())
         )
         self.conn.commit()
-    
+
     def close(self):
         self.conn.close()
+
 
 class Notifier:
     def __init__(self):
         self.db = Database()
-    
+
     def _get_repo_details(self, repo_name):
         cached = self.db.get_repo_info(repo_name)
         if cached:
@@ -133,7 +137,7 @@ class Notifier:
                 "language": cached[1],
                 "stargazers_count": cached[2]
             }
-        
+
         try:
             response = requests.get(
                 f"https://api.github.com/repos/{repo_name}",
@@ -150,7 +154,7 @@ class Notifier:
                 }
         except Exception as e:
             logger.warning(f"获取仓库详情失败: {e}")
-        
+
         return {
             "description": "暂无描述",
             "language": "",
@@ -161,7 +165,7 @@ class Notifier:
         cached = self.db.get_user_avatar(login)
         if cached:
             return cached
-        
+
         try:
             response = requests.get(
                 f"https://api.github.com/users/{login}",
@@ -174,7 +178,7 @@ class Notifier:
                 return avatar_url
         except Exception as e:
             logger.warning(f"获取用户头像失败: {e}")
-        
+
         return "https://github.com/identicons/app.png"
 
     def format_message(self, event):
@@ -204,7 +208,7 @@ class Notifier:
                 "CreateEvent": "🆕 创建",
                 "ReleaseEvent": "🚀 发布了新版本"
             }
-            
+
             # 处理ReleaseEvent的特殊信息
             release_info = ""
             if event_type == "ReleaseEvent":
@@ -232,14 +236,18 @@ class Notifier:
             ])
 
     def send_all(self, message):
+        # 发送到所有钉钉机器人
         if config["notifications"]["dingtalk"]["enable"]:
-            self._send_dingtalk(message)
+            for bot in config["notifications"]["dingtalk"].get("bots", []):
+                self._send_dingtalk(message, bot)
+
+        # 发送到所有飞书机器人
         if config["notifications"]["feishu"]["enable"]:
-            self._send_feishu(message)
-    
-    def _send_dingtalk(self, message):
+            for bot in config["notifications"]["feishu"].get("bots", []):
+                self._send_feishu(message, bot)
+
+    def _send_dingtalk(self, message, bot_config):
         try:
-            conf = config["notifications"]["dingtalk"]
             payload = {
                 "msgtype": "markdown",
                 "markdown": {
@@ -247,21 +255,24 @@ class Notifier:
                     "text": message.replace("\n", "\n\n")
                 }
             }
-            url = conf["webhook"]
-            if conf.get("secret"):
+            url = bot_config["webhook"]
+            if bot_config.get("secret"):
                 timestamp = str(round(time.time() * 1000))
-                sign = self._generate_sign(conf["secret"], timestamp)
+                sign = self._generate_dingtalk_sign(bot_config["secret"], timestamp)
                 url += f"&timestamp={timestamp}&sign={sign}"
-            requests.post(url, json=payload, timeout=5)
-            logger.info("发现新事件，已发送到钉钉")
-        except Exception as e:
-            logger.error(f"钉钉发送失败: {e}")
 
-    def _send_feishu(self, message):
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code != 200:
+                logger.error(f"钉钉发送失败到 {bot_config.get('name', '未知机器人')}: {response.text}")
+            else:
+                logger.info(f"发现新事件，已发送到钉钉机器人 {bot_config.get('name', '未知机器人')}")
+        except Exception as e:
+            logger.error(f"钉钉发送失败到 {bot_config.get('name', '未知机器人')}: {e}")
+
+    def _send_feishu(self, message, bot_config):
         try:
-            conf = config["notifications"]["feishu"]
-            webhook_url = conf["webhook"]
-            
+            webhook_url = bot_config["webhook"]
+
             # 准备基础请求数据
             payload = {
                 "msg_type": "interactive",
@@ -284,10 +295,10 @@ class Notifier:
             }
 
             # 处理签名逻辑
-            if conf.get("secret"):
+            if bot_config.get("secret"):
                 timestamp = str(int(time.time()))  # 秒级时间戳
-                sign = self._generate_sign(conf["secret"], timestamp)
-                
+                sign = self._generate_feishu_sign(bot_config["secret"], timestamp)
+
                 # 将签名参数添加到URL中
                 parsed_url = urllib.parse.urlparse(webhook_url)
                 query = urllib.parse.parse_qs(parsed_url.query)
@@ -299,7 +310,7 @@ class Notifier:
                 webhook_url = urllib.parse.urlunparse(
                     parsed_url._replace(query=new_query)
                 )
-                
+
             # 发送请求
             response = requests.post(
                 webhook_url,
@@ -307,9 +318,9 @@ class Notifier:
                 headers={"Content-Type": "application/json"},
                 timeout=10
             )
-            
+
             if response.status_code != 200:
-                error_msg = f"飞书推送失败: {response.status_code}"
+                error_msg = f"飞书推送失败到 {bot_config.get('name', '未知机器人')}: {response.status_code}"
                 try:
                     error_detail = response.json()
                     error_msg += f" | 错误码: {error_detail.get('code')} | 消息: {error_detail.get('msg')}"
@@ -317,12 +328,22 @@ class Notifier:
                     error_msg += f" | 响应: {response.text}"
                 logger.error(error_msg)
             else:
-                logger.info("发现1个新事件，飞书推送成功")
-                
-        except Exception as e:
-            logger.error(f"飞书发送异常: {str(e)}")
+                logger.info(f"发现1个新事件，飞书推送成功到 {bot_config.get('name', '未知机器人')}")
 
-    def _generate_sign(self, secret, timestamp):
+        except Exception as e:
+            logger.error(f"飞书发送异常到 {bot_config.get('name', '未知机器人')}: {str(e)}")
+
+    def _generate_dingtalk_sign(self, secret, timestamp):
+        """钉钉签名生成方法"""
+        string_to_sign = f"{timestamp}\n{secret}"
+        hmac_code = hmac.new(
+            secret.encode('utf-8'),
+            string_to_sign.encode('utf-8'),
+            digestmod=hashlib.sha256
+        ).digest()
+        return urllib.parse.quote_plus(base64.b64encode(hmac_code))
+
+    def _generate_feishu_sign(self, secret, timestamp):
         """飞书签名生成方法"""
         string_to_sign = f"{timestamp}\n{secret}".encode('utf-8')
         hmac_code = hmac.new(
@@ -338,25 +359,23 @@ class Notifier:
             # 1. 转换图片语法（如果存在）
             if '![' in message and '](' in message:
                 message = re.sub(r'!\[.*?\]\(.*?\)', '', message)
-            
+
             # 2. 简化标题格式
             message = message.replace("### ✨ GitHub动态通知\n", "")
-            
+
             # 3. 确保双换行
             message = message.replace("\n", "\n\n")
-            
-            # 4. 特殊字符转义（可选）
-            # message = message.replace("[", "【").replace("]", "】")
-            
+
             return message
         except Exception as e:
             logger.error(f"飞书消息格式化异常: {e}")
             return "GitHub动态通知（消息格式化出错）"
 
+
 def monitor():
     notifier = Notifier()
     logger.info("🚀 GitHub监控启动")
-    
+
     try:
         while True:
             try:
@@ -367,7 +386,7 @@ def monitor():
                     params={"per_page": config["github"]["max_events"]},
                     timeout=10
                 ).json()
-                
+
                 # 处理事件
                 new_events = 0
                 for event in events:
@@ -377,21 +396,22 @@ def monitor():
                         notifier.db.mark_pushed(event["id"])
                         new_events += 1
                         time.sleep(0.5)
-                
+
                 logger.info(f"本轮检查完成，发现{new_events}个新事件")
                 time.sleep(config["github"]["poll_interval"])
-            
+
             except requests.exceptions.RequestException as e:
                 logger.error(f"网络请求异常: {e}")
                 time.sleep(60)
             except Exception as e:
                 logger.error(f"处理异常: {e}")
                 time.sleep(60)
-    
+
     except KeyboardInterrupt:
         logger.info("🛑 手动停止监控")
     finally:
-        notifier.close()
+        notifier.db.close()
+
 
 if __name__ == "__main__":
     monitor()
