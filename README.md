@@ -67,6 +67,6 @@ notifications:
 
 ## 运行监控
 ```python
-python3 gihhub_monitor.py
+python3 github_monitor.py
 ```
 
